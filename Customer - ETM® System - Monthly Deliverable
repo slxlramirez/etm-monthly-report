@@ -1,0 +1,490 @@
+<dashboard>
+  <label>Customer - ETM® System - Monthly Deliverable - Academy</label>
+  <row>
+    <panel>
+      <table>
+        <search>
+          <query>| dbxquery 
+connection=dw_academy
+query="
+SELECT 'Deliverable: ETM® System Monthly  - '||to_char(date_trunc('month', current_date) - interval '1 month','Month YYYY') as header
+UNION 
+SELECT 'Business Partner: SecureLogix ' as header
+" 
+shortnames=t
+| rename header as "Report Title"</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="count">10</option>
+        <option name="drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
+      </table>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <chart>
+        <title>Inbound Calls by Day by Disposition</title>
+        <search>
+          <query>| dbxquery 
+connection=dw_academy
+query="
+SELECT   datekey, 
+         term_status,
+         count(c.call_oid) as calls
+FROM     dw_fk_datawarehouse_nomodel c
+WHERE    datekey &gt;= date_trunc('month',current_date)::date - interval '1 month' AND
+         datekey  &lt; date_trunc('month',current_date)::date AND
+         direction = 'INBOUND'
+GROUP BY datekey, term_status
+ORDER BY datekey, term_status
+" shortnames=t
+| eval _time=strptime(datekey,"%Y-%m-%d")
+| timechart sum(calls) by term_status</query>
+          <earliest>-1mon@mon</earliest>
+          <latest>@mon</latest>
+        </search>
+        <option name="charting.axisLabelsX.majorLabelStyle.rotation">45</option>
+        <option name="charting.axisTitleX.visibility">collapsed</option>
+        <option name="charting.chart">column</option>
+        <option name="charting.chart.stackMode">stacked</option>
+        <option name="charting.drilldown">none</option>
+        <option name="charting.legend.placement">bottom</option>
+        <option name="refresh.display">progressbar</option>
+        <option name="charting.fieldColors">{"ALLOWED": 0x99cccc, "TERMINATED": 0x990000}</option>
+      </chart>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <chart>
+        <title>Inbound Calls by Disposition</title>
+        <search>
+          <query>| dbxquery 
+connection=dw_academy
+query="
+SELECT   term_status,
+         count(c.call_oid) as calls
+FROM     dw_fk_datawarehouse_nomodel c
+WHERE    datekey &gt;= date_trunc('month',current_date)::date - interval '1 month' AND
+         datekey  &lt; date_trunc('month',current_date)::date AND
+         direction = 'INBOUND'
+GROUP BY term_status
+ORDER BY term_status
+" shortnames=t
+| table term_status calls
+| rename term_status as "Disposition" calls as "Calls"</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="charting.chart">pie</option>
+        <option name="charting.drilldown">none</option>
+        <option name="height">260</option>
+        <option name="charting.fieldColors">{"ALLOWED": 0x99cccc, "TERMINATED": 0x990000}</option>
+      </chart>
+    </panel>
+    <panel>
+      <table>
+        <title>Top 10  Inbound Callers (excl terminated calls)</title>
+        <search>
+          <query>| dbxquery 
+connection=dw_academy
+query="
+SELECT  
+         external_number,
+         count(c.call_oid) as calls,
+         ROUND(SUM(dur_offhook_min),1) as duration_m,
+         count(distinct internal_number) as spread
+FROM     dw_fk_datawarehouse_nomodel c
+WHERE    datekey &gt;= date_trunc('month',current_date)::date - interval '1 month' AND
+         datekey  &lt; date_trunc('month',current_date)::date AND
+         term_status = 'ALLOWED' AND
+         direction = 'INBOUND' AND
+         external_number NOT IN 
+         (
+         SELECT directory_number
+         FROM   etm_directory
+         WHERE  group_name LIKE 'Allow%' OR group_name = 'Global Whitelist'
+         )
+GROUP BY external_number
+ORDER BY count(c.call_oid) DESC
+LIMIT 10
+" shortnames=t
+| sort 0 calls DESC
+| eval avg_duration=ROUND(duration_m/calls,1)
+| eval calls = tostring(calls, "commas")
+| eval duration_m = tostring(duration_m,"commas")
+| table external_number last_name calls duration_m avg_duration spread
+| rename external_number as "External Number" last_name as "Directory Last Name" calls as "Calls" duration_m as "Dur. (m)" avg_duration as "Avg. Dur." spread as "Spread"</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="drilldown">none</option>
+      </table>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <chart>
+        <title>Outbound International by Day</title>
+        <search>
+          <query>| dbxquery 
+connection=dw_academy
+maxrows=31
+query="
+SELECT   datekey, 
+         count(c.call_oid) as calls,
+         ROUND(SUM(dur_offhook_min),1) as duration_m
+FROM     dw_fk_datawarehouse_nomodel c
+WHERE    datekey &gt;= date_trunc('month',current_date)::date - interval '1 month' AND
+         datekey  &lt; date_trunc('month',current_date)::date AND
+         direction = 'OUTBOUND' AND
+         call_flags LIKE '%INTL%' AND
+         substr(external_number,STRPOS(external_number,'[')+1,(STRPOS(external_number,']'))-(STRPOS(external_number,'[')+1)) NOT IN ('800','855','866','877','888') AND
+         substr(external_number,STRPOS(external_number,'[')+1,(STRPOS(external_number,']'))-(STRPOS(external_number,'[')+1))||substr(external_number,STRPOS(external_number,'(')+1,(STRPOS(external_number,')'))-(STRPOS(external_number,'(')+1))  NOT IN ('1800','1855','1866','1877','1888') AND
+         external_number NOT IN 
+         (
+         SELECT directory_number
+         FROM   etm_directory
+         WHERE  group_name LIKE 'Allow%' OR group_name = 'Global Whitelist'
+         )
+GROUP BY datekey
+ORDER BY datekey
+" shortnames=t
+| eval _time=strptime(datekey,"%Y-%m-%d")
+| timechart sum(calls) AS "Calls" sum(duration_m) as "Dur. (m)"</query>
+          <earliest>-1mon@mon</earliest>
+          <latest>@mon</latest>
+        </search>
+        <option name="charting.axisTitleX.visibility">collapsed</option>
+        <option name="charting.chart">column</option>
+        <option name="charting.chart.overlayFields">"Dur. (m)"</option>
+        <option name="charting.drilldown">none</option>
+        <option name="charting.legend.labelStyle.overflowMode">ellipsisMiddle</option>
+        <option name="charting.legend.placement">bottom</option>
+        <option name="refresh.display">progressbar</option>
+      </chart>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <chart>
+        <title>Outbound International by Country</title>
+        <search base="top_countries">
+          <query>| chart sum(Calls) by Country</query>
+        </search>
+        <option name="charting.chart">pie</option>
+        <option name="charting.drilldown">none</option>
+      </chart>
+    </panel>
+    <panel>
+      <table>
+        <title>Top Outbound INTL Callers by Count</title>
+        <search>
+          <query>| dbxquery 
+connection=dw_academy
+query="
+SELECT  
+         internal_number,
+         count(c.call_oid) as calls,
+         ROUND(SUM(dur_offhook_min),1) as duration_m
+FROM     dw_fk_datawarehouse_nomodel c
+WHERE    datekey &gt;= date_trunc('month',current_date)::date - interval '1 month' AND
+         datekey  &lt; date_trunc('month',current_date)::date AND
+         term_status = 'ALLOWED' AND
+         direction = 'OUTBOUND' AND
+         call_flags LIKE '%INTL%' AND
+         substr(external_number,STRPOS(external_number,'[')+1,(STRPOS(external_number,']'))-(STRPOS(external_number,'[')+1)) NOT IN ('800','855','866','877','888') AND
+         substr(external_number,STRPOS(external_number,'[')+1,(STRPOS(external_number,']'))-(STRPOS(external_number,'[')+1))||substr(external_number,STRPOS(external_number,'(')+1,(STRPOS(external_number,')'))-(STRPOS(external_number,'(')+1))  NOT IN ('1800','1855','1866','1877','1888') AND
+         internal_number NOT IN 
+         (
+         SELECT directory_number
+         FROM   etm_directory
+         WHERE  group_name LIKE 'Allow%' OR group_name = 'Global Whitelist'
+         )
+GROUP BY internal_number
+ORDER BY count(c.call_oid) DESC
+LIMIT 10
+" shortnames=t
+| eval calls = tostring(calls, "commas")
+| table internal_number calls duration_m
+| rename calls as "Calls" internal_number as "Internal Number" durationa_m as "Dur. (m)"</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
+      </table>
+    </panel>
+    <panel>
+      <table>
+        <title>Top 10 Countries Called</title>
+        <search id="top_countries">
+          <query>| dbxquery 
+connection=dw_academy
+query="
+SELECT  
+         substr(external_number,STRPOS(external_number,'[')+1,(STRPOS(external_number,']'))-(STRPOS(external_number,'[')+1)) as regioncode,
+         substr(external_number,STRPOS(external_number,'(')+1,(STRPOS(external_number,')'))-(STRPOS(external_number,'(')+1)) as nationalnumber,
+         count(c.call_oid) as calls,
+         ROUND(SUM(dur_offhook_min),1) as duration_m
+FROM     dw_fk_datawarehouse_nomodel c
+WHERE    datekey &gt;= date_trunc('month',current_date)::date - interval '1 month' AND
+         datekey  &lt; date_trunc('month',current_date)::date AND
+         term_status = 'ALLOWED' AND
+         direction = 'OUTBOUND' AND
+         call_flags LIKE '%INTL%' AND
+         substr(external_number,STRPOS(external_number,'[')+1,(STRPOS(external_number,']'))-(STRPOS(external_number,'[')+1)) NOT IN ('800','855','866','877','888') AND
+         substr(external_number,STRPOS(external_number,'[')+1,(STRPOS(external_number,']'))-(STRPOS(external_number,'[')+1))||substr(external_number,STRPOS(external_number,'(')+1,(STRPOS(external_number,')'))-(STRPOS(external_number,'(')+1))  NOT IN ('1800','1855','1866','1877','1888') AND
+        external_number NOT IN 
+        (
+        SELECT directory_number
+        FROM   etm_directory
+        WHERE  group_name LIKE 'Allow%' OR group_name = 'Global Whitelist'
+        )
+GROUP BY substr(external_number,STRPOS(external_number,'[')+1,(STRPOS(external_number,']'))-(STRPOS(external_number,'[')+1)),
+         substr(external_number,STRPOS(external_number,'(')+1,(STRPOS(external_number,')'))-(STRPOS(external_number,'(')+1))
+ORDER BY count(c.call_oid) DESC
+LIMIT 10
+" shortnames=t
+| join type=left regioncode                 [| inputlookup ccmi_lookup_v2.csv | table regioncode country | where regioncode!=1 | dedup regioncode | sort 0 regioncode]
+| join type=left regioncode, nationalnumber [| inputlookup ccmi_lookup_v2.csv | table regioncode nationalnumber country | sort 0 regioncode]
+| table regioncode nationalnumber country calls duration_m
+| rename calls as "Calls" regioncode as "Region Code" nationalnumber as "Natl Number" country as "Country" duration_m as "Dur. (m)"</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
+      </table>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <title>Call Count Spike Callers (Spikey)</title>
+      <table>
+        <title>At least 25 calls on 1 day / At least 50% of the total calls on 1 day / At least 2 days called in</title>
+        <search>
+          <query>| dbxquery 
+connection=dw_academy
+query="
+SELECT 
+external_number,
+total_calls,
+max_calls,
+days_called,
+perc_from_max_day
+FROM
+(
+SELECT  date_trunc('month',current_date)::date as month_of_year,
+        external_number,
+        sum(cnt) as total_calls,
+        max(cnt) as max_calls,
+        ROUND(max(cnt)::numeric/sum(cnt),3) as perc_from_max_day,
+        count(distinct datekey) as days_called
+FROM
+(
+SELECT  datekey,
+        external_number,
+        count(*) as CNT
+FROM    dw_fk_datawarehouse_nomodel
+WHERE   datekey &gt;= date_trunc('month',current_date)::date - interval '1 month' AND
+        datekey  &lt; date_trunc('month',current_date)::date AND
+        term_status = 'ALLOWED' AND
+        direction = 'INBOUND' AND
+        external_number NOT IN 
+         (
+         SELECT directory_number
+         FROM   etm_directory
+         WHERE  group_name LIKE 'Allow%' OR group_name = 'Global Whitelist'
+         )
+GROUP BY datekey, external_number
+ORDER BY datekey, count(*) DESC
+ ) t
+ GROUP BY date_trunc('month',current_date)::date, external_number
+) s WHERE max_calls &gt; 25 and perc_from_max_day &gt;= .5 and days_called &gt; 1
+ORDER BY perc_from_max_day DESC
+LIMIT 5
+" shortnames=t
+| table external_number total_calls max_calls days_called perc_from_max_day
+| rename external_number as "External Number" total_calls as "Calls" max_calls as "Max Day" days_called as "Num Days Called" perc_from_max_day as "% Max"</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
+      </table>
+    </panel>
+    <panel>
+      <title>High Call Distribution Callers (Spread)</title>
+      <table>
+        <title>High Calls (25+) / Low Avg Duration (&lt;1.5m) Callers (Low Value Calls)</title>
+        <search>
+          <query>| dbxquery 
+connection=dw_academy
+query="
+SELECT * 
+FROM
+(
+SELECT   *,
+         ROUND(duration_min/calls,1) as avg_duration,
+         ROUND((spread::numeric/calls)*100,1) perc_spread
+FROM 
+(
+SELECT  
+         external_number,
+         count(c.call_oid) as calls,
+         count(distinct internal_number) as spread,
+         ROUND(sum(dur_answered_min),1) as duration_min
+FROM     dw_fk_datawarehouse_nomodel c
+WHERE    datekey &gt;= date_trunc('month',current_date)::date - interval '1 month' AND
+         datekey  &lt; date_trunc('month',current_date)::date AND
+         term_status = 'ALLOWED' AND
+         direction = 'INBOUND' AND
+         external_number NOT IN 
+         (
+         SELECT directory_number
+         FROM   etm_directory
+         WHERE  group_name LIKE 'Allow%' OR group_name = 'Global Whitelist'
+         )
+GROUP BY external_number
+) a 
+) b 
+WHERE calls &gt;= 25 and avg_duration &lt; 1.5
+ORDER BY perc_spread DESC
+LIMIT 5
+" shortnames=t
+| table external_number calls duration_min avg_duration spread perc_spread
+| rename external_number as "External Number" calls as "Calls" duration_min as "Dur. (m)" avg_duration as "Avg. Dur. (m)" spread as "Spread" perc_spread as "% Spread"</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
+      </table>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <table>
+        <title>Terminated Callers</title>
+        <search>
+          <query>| dbxquery 
+connection=dw_academy
+query="
+SELECT  
+         external_number as directory_number,
+         count(c.call_oid) as calls
+FROM     dw_fk_datawarehouse_nomodel c
+WHERE    datekey &gt;= date_trunc('month',current_date)::date - interval '1 month' AND
+         datekey  &lt; date_trunc('month',current_date)::date AND
+         term_status = 'TERMINATED' AND
+         direction = 'INBOUND'AND
+        external_number NOT IN 
+        (
+        SELECT directory_number
+        FROM   etm_directory
+        WHERE  group_name LIKE 'Allow%' OR group_name = 'Global Whitelist'
+        )
+GROUP BY external_number
+ORDER BY count(c.call_oid) DESC
+LIMIT 10
+" shortnames=t
+| eval calls = tostring(calls, "commas")
+| table directory_number calls
+| join type=left directory_number
+[
+| dbxquery 
+connection=Academy
+maxrows=500000
+query="
+SELECT  LAST_NAME as last_name,
+        FIRST_NAME as first_name,
+        COMMENTS as comments,
+        AUTH_NO as auth_no,
+        directory_number
+FROM
+(
+SELECT  directory_number,
+        LAST_NAME,
+        FIRST_NAME,
+        AUTH_NO,
+        COMMENTS,
+        row_number() over (partition by directory_number order by last_name) as rn
+FROM
+(
+SELECT  CONCAT(CONCAT(CONCAT(CONCAT(CONCAT(CONCAT('[',dl.country_code),']'),'('),dl.area_code),')'),dl.local_num) as directory_number,
+        dl.LAST_NAME,
+        dl.FIRST_NAME,
+        dl.AUTH_NO,
+        dl.COMMENTS
+FROM    DIR_LISTING dl
+)
+) a WHERE rn=1
+ORDER BY directory_number
+" shortnames=t
+| table DIRECTORY_NUMBER LAST_NAME
+| rename DIRECTORY_NUMBER as "directory_number" LAST_NAME as "last_name"
+]
+| table directory_number last_name calls
+| rename directory_number as "External Number" last_name as "Directory Last Name" calls as "Calls"</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="drilldown">none</option>
+      </table>
+    </panel>
+    <panel>
+      <table>
+        <title>ETM Firewall Rules</title>
+        <search>
+          <query>| dbxquery 
+connection=dw_academy
+maxrows=10
+query="
+SELECT   fw_rule_comments,
+         term_status,
+         count(c.call_oid) as calls
+FROM     dw_fk_datawarehouse_nomodel c
+WHERE    datekey &gt;= date_trunc('month',current_date)::date - interval '1 month' AND
+         datekey  &lt; date_trunc('month',current_date)::date AND
+         direction = 'INBOUND'
+GROUP BY fw_rule_comments, term_status
+ORDER BY fw_rule_comments, term_status
+" shortnames=t
+| eval calls = tostring(calls, "commas")
+| table fw_rule_comments term_status calls
+| rename calls as "Calls" fw_rule_comments as "Firewall Rule" term_status as "Disposition"</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="drilldown">none</option>
+      </table>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <table>
+        <title>Trademark, Patent and Copyright Information</title>
+        <search>
+          <query>| makeresults | eval footer="PolicyGuru® Solution | ETM® System"
+| append
+[
+| makeresults | eval footer="
+ETM, We See Your Voice, SecureLogix, and the SecureLogix Emblem are registered trademarks or registered trademarks and registered service marks of SecureLogix Corporation in the U.S.A. and other countries. PolicyGuru is a registered trademark of SecureLogix Corporation in the U.S.A. All other trademarks mentioned herein are believed to be trademarks of their respective owners."
+]
+| append
+[
+| makeresults | eval footer="© Copyright 2018 SecureLogix Corporation. All Rights Reserved.  This product is protected by one or more of the following patents: US 6,249,575 B1, US 6,320,948 B1, US 6,687,353 B1, US 6,718,024 B1, US 6,760,420 B2, US 6,760,421 B2, US 6,879,671 B1, US 7,133,511 B2, US 7,231,027 B2, US 7,440,558 B2, US 8,150,013 B2, CA 2,354,149, DE 1,415,459 B1, FR 1,415,459 B1, and GB 1,415,459 B1. U.S Patent Pending."
+]
+| table footer
+| rename footer as "SecureLogix TPC"</query>
+          <earliest>$earliest$</earliest>
+          <latest>$latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+      </table>
+    </panel>
+  </row>
+</dashboard>
