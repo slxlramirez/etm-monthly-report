@@ -1,11 +1,11 @@
 <dashboard>
-  <label>Customer - ETM® System - Monthly Deliverable - Academy</label>
+  <label>Customer - ETM® System - Monthly Deliverable - TEMPLATE 1.1 05-14-2018</label>
   <row>
     <panel>
       <table>
         <search>
           <query>| dbxquery 
-connection=dw_academy
+connection=dw_nypd 
 query="
 SELECT 'Deliverable: ETM® System Monthly  - '||to_char(date_trunc('month', current_date) - interval '1 month','Month YYYY') as header
 UNION 
@@ -28,7 +28,7 @@ shortnames=t
         <title>Inbound Calls by Day by Disposition</title>
         <search>
           <query>| dbxquery 
-connection=dw_academy
+connection=dw_nypd 
 query="
 SELECT   datekey, 
          term_status,
@@ -62,7 +62,7 @@ ORDER BY datekey, term_status
         <title>Inbound Calls by Disposition</title>
         <search>
           <query>| dbxquery 
-connection=dw_academy
+connection=dw_nypd
 query="
 SELECT   term_status,
          count(c.call_oid) as calls
@@ -89,7 +89,7 @@ ORDER BY term_status
         <title>Top 10  Inbound Callers (excl terminated calls)</title>
         <search>
           <query>| dbxquery 
-connection=dw_academy
+connection=dw_nypd
 query="
 SELECT  
          external_number,
@@ -116,11 +116,48 @@ LIMIT 10
 | eval calls = tostring(calls, "commas")
 | eval duration_m = tostring(duration_m,"commas")
 | table external_number last_name calls duration_m avg_duration spread
-| rename external_number as "External Number" last_name as "Directory Last Name" calls as "Calls" duration_m as "Dur. (m)" avg_duration as "Avg. Dur." spread as "Spread"</query>
+| rename external_number as directory_number
+| join type=left directory_number
+[
+| dbxquery 
+connection=nypd
+maxrows=500000
+query="
+SELECT  LAST_NAME as last_name,
+        FIRST_NAME as first_name,
+        COMMENTS as comments,
+        AUTH_NO as auth_no,
+        directory_number
+FROM
+(
+SELECT  directory_number,
+        LAST_NAME,
+        FIRST_NAME,
+        AUTH_NO,
+        COMMENTS,
+        row_number() over (partition by directory_number order by last_name) as rn
+FROM
+(
+SELECT  CONCAT(CONCAT(CONCAT(CONCAT(CONCAT(CONCAT('[',dl.country_code),']'),'('),dl.area_code),')'),dl.local_num) as directory_number,
+        dl.LAST_NAME,
+        dl.FIRST_NAME,
+        dl.AUTH_NO,
+        dl.COMMENTS
+FROM    DIR_LISTING dl
+)
+) a WHERE rn=1
+ORDER BY directory_number
+" shortnames=t
+| table DIRECTORY_NUMBER LAST_NAME
+| rename DIRECTORY_NUMBER as "directory_number" LAST_NAME as "last_name"
+]
+| table directory_number last_name calls duration_m avg_duration spread
+| rename directory_number as "External Number" last_name as "Directory Last Name" calls as "Calls" duration_m as "Dur. (m)" avg_duration as "Avg. Dur." spread as "Spread"</query>
           <earliest>-24h@h</earliest>
           <latest>now</latest>
         </search>
         <option name="drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
       </table>
     </panel>
   </row>
@@ -130,7 +167,7 @@ LIMIT 10
         <title>Outbound International by Day</title>
         <search>
           <query>| dbxquery 
-connection=dw_academy
+connection=dw_nypd 
 maxrows=31
 query="
 SELECT   datekey, 
@@ -183,7 +220,7 @@ ORDER BY datekey
         <title>Top Outbound INTL Callers by Count</title>
         <search>
           <query>| dbxquery 
-connection=dw_academy
+connection=dw_nypd 
 query="
 SELECT  
          internal_number,
@@ -219,10 +256,10 @@ LIMIT 10
     </panel>
     <panel>
       <table>
-        <title>Top 10 Countries Called</title>
+        <title>Top Countries Called</title>
         <search id="top_countries">
           <query>| dbxquery 
-connection=dw_academy
+connection=dw_nypd 
 query="
 SELECT  
          substr(external_number,STRPOS(external_number,'[')+1,(STRPOS(external_number,']'))-(STRPOS(external_number,'[')+1)) as regioncode,
@@ -246,7 +283,6 @@ WHERE    datekey &gt;= date_trunc('month',current_date)::date - interval '1 mont
 GROUP BY substr(external_number,STRPOS(external_number,'[')+1,(STRPOS(external_number,']'))-(STRPOS(external_number,'[')+1)),
          substr(external_number,STRPOS(external_number,'(')+1,(STRPOS(external_number,')'))-(STRPOS(external_number,'(')+1))
 ORDER BY count(c.call_oid) DESC
-LIMIT 10
 " shortnames=t
 | join type=left regioncode                 [| inputlookup ccmi_lookup_v2.csv | table regioncode country | where regioncode!=1 | dedup regioncode | sort 0 regioncode]
 | join type=left regioncode, nationalnumber [| inputlookup ccmi_lookup_v2.csv | table regioncode nationalnumber country | sort 0 regioncode]
@@ -267,7 +303,7 @@ LIMIT 10
         <title>At least 25 calls on 1 day / At least 50% of the total calls on 1 day / At least 2 days called in</title>
         <search>
           <query>| dbxquery 
-connection=dw_academy
+connection=dw_nypd 
 query="
 SELECT 
 external_number,
@@ -322,7 +358,7 @@ LIMIT 5
         <title>High Calls (25+) / Low Avg Duration (&lt;1.5m) Callers (Low Value Calls)</title>
         <search>
           <query>| dbxquery 
-connection=dw_academy
+connection=dw_nypd 
 query="
 SELECT * 
 FROM
@@ -371,7 +407,7 @@ LIMIT 5
         <title>Terminated Callers</title>
         <search>
           <query>| dbxquery 
-connection=dw_academy
+connection=dw_nypd 
 query="
 SELECT  
          external_number as directory_number,
@@ -396,7 +432,7 @@ LIMIT 10
 | join type=left directory_number
 [
 | dbxquery 
-connection=Academy
+connection=nypd 
 maxrows=500000
 query="
 SELECT  LAST_NAME as last_name,
@@ -440,7 +476,7 @@ ORDER BY directory_number
         <title>ETM Firewall Rules</title>
         <search>
           <query>| dbxquery 
-connection=dw_academy
+connection=dw_nypd 
 maxrows=10
 query="
 SELECT   fw_rule_comments,
